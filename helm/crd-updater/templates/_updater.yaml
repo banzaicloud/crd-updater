@@ -1,0 +1,149 @@
+{{- define "crd-update.tpl" -}}
+{{ $root := first . }}
+{{ $args := rest . }}
+{{ $values := first $args }}
+{{ $yamlManifests := compact (rest $args) }}
+{{ $releaseName := default (printf "%s-crd-updater" $root.Release.Name ) $values.releaseName  }}
+{{ $hookDeletePolicy := default "hook-before-creation" $values.hookDeletePolicy }}
+{{ $imageSettings := default (dict "repository" nil "tag" nil "pullPolicy" nil) $values.image }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $releaseName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"] # "" indicates the core API group
+    resources: ["customresourcedefinitions"]
+    verbs: ["create", "get", "watch", "list", "delete", "update"]
+{{ toYaml $values.clusterRoleRules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $releaseName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $releaseName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $releaseName }}
+    namespace: {{ $root.Release.Namespace }}
+---
+{{ if $values.roleRules }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $releaseName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+rules:
+{{ toYaml $values.roleRules | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $releaseName }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $releaseName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $releaseName }}
+{{ end }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $releaseName }}
+  annotations:
+      "helm.sh/hook": pre-install,pre-upgrade
+      "helm.sh/hook-weight": "1"
+      "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+{{ range $index, $object := $yamlManifests }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $releaseName }}-manifests-{{ $index }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+data:
+  manifest.yaml: |
+    ---
+    {{- $object | nindent 4 -}}
+{{ end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "{{ $releaseName }}"
+  labels:
+    app.kubernetes.io/instance: {{ $releaseName | quote }}
+  annotations:
+    # This is what defines this resource as a hook. Without this line, the
+    # job is considered part of the release.
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+# TODO: security (uid, gid)
+spec:
+  template:
+    metadata:
+      name: "{{ $releaseName }}"
+      labels:
+        app.kubernetes.io/instance: {{ $releaseName | quote }}
+{{ if $values.pod.annotations }}
+      annotations:
+{{ toYaml $values.pod.annotations | nindent 8 }}
+{{ end }}
+    spec:
+      activeDeadlineSeconds: 300
+      restartPolicy: Never
+      serviceAccountName: "{{ $releaseName }}"
+      containers:
+        - name: crd-updater
+          image: "{{ default "turip/test" $imageSettings.repository  }}:{{ default "crd-updater" $imageSettings.tag }}"
+          imagePullPolicy: "{{ default "Always" $imageSettings.pullPolicy }}"
+          args: [
+              {{ range $index, $_ := $yamlManifests }}
+              "--manifest", "/manifests/{{ $index }}/manifest.yaml",
+              {{ end }}
+          ]
+          volumeMounts:
+          {{ range $index, $_ := $yamlManifests }}
+          - name: manifest-volume-{{ $index }}
+            mountPath: /manifests/{{ $index }}
+          {{ end }}
+      volumes:
+      {{ range $index, $_ := $yamlManifests }}
+      - name: manifest-volume-{{ $index }}
+        configMap:
+          name: {{ $releaseName }}-manifests-{{ $index }}
+      {{ end }}
+      securityContext:
+        runAsGroup: 1337
+        runAsUser: 1337
+        fsGroup: 1337
+{{ if $values.imagePullSecrets }}
+      imagePullSecrets:
+{{ toYaml $values.imagePullSecrets | nindent 8 }}
+{{ end }}
+{{- end -}}
