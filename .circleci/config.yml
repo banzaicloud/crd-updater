@@ -124,7 +124,7 @@ workflows:
           context: helm
           executor: helm311
           name: Publish crd-updater chart
-          charts-dir: helm/crd-updater
+          charts-dir: helm
           filters:
             branches:
               ignore: /.*/
