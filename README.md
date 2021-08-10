@@ -126,7 +126,7 @@ Next we need to change the `crd-updater.yaml` to this:
 {{- end -}}
 ```
 
-There are two changes compared to the previous one: in line 2 a new list item is added to the `$templateArgs`: any YAML manifest passed after the first two arguments for the `crd-update.tpl` are YAML manifests that it will automatically update in the remote cluster. Please note: that the order of resource creation is not based on the argument position: CRD Updater will determine the optimal installation order (TODO)
+There are two changes compared to the previous one: in line 2 a new list item is added to the `$templateArgs`: any YAML manifest passed after the first two arguments for the `crd-update.tpl` are YAML manifests that it will automatically update in the remote cluster. Please note: that the order of resource creation is not based on the argument position: CRD Updater will determine the [optimal installation order](https://github.com/banzaicloud/operator-tools/blob/v0.24.0/pkg/utils/sort.go#L29).
 
 The second change is the inclusion of the `{{- else -}}` branch in the condition: if the current release is not managing CRDs, then we should output our CustomResources for Helm (or any other CICD system) to handle.
 
