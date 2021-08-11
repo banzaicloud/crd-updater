@@ -119,7 +119,7 @@ spec:
       serviceAccountName: "{{ $releaseName }}"
       containers:
         - name: crd-updater
-          image: "{{ default "ghcr.io/banzaicloud/crd-updater" $imageSettings.repository  }}:{{ default "v0.0.1" $imageSettings.tag }}"
+          image: "{{ default "ghcr.io/banzaicloud/crd-updater" $imageSettings.repository  }}:{{ default "v0.0.2" $imageSettings.tag }}"
           imagePullPolicy: "{{ default "Always" $imageSettings.pullPolicy }}"
           args: [
               {{ range $index, $_ := $yamlManifests }}

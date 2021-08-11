@@ -35,7 +35,7 @@ To use this library chart, you need to have a Helm 3 chart (`version: v2` in `Ch
 ```yaml
 dependencies:
   - name: "crd-updater"
-    version: "0.0.1"
+    version: "0.0.2"
     repository: "https://kubernetes-charts.banzaicloud.com"
 ```
 
