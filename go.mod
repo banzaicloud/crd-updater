@@ -1,4 +1,4 @@
-module github.com/banzaicloud/helm3-crd-updater
+module github.com/banzaicloud/crd-updater
 
 go 1.16
 

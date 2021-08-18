@@ -1,10 +1,11 @@
 package main
 
 import (
-	"github.com/banzaicloud/helm3-crd-updater/cmd"
+	"os"
+
+	"github.com/banzaicloud/crd-updater/cmd"
 	"github.com/banzaicloud/operator-tools/pkg/logger"
 	"k8s.io/klog/v2"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 

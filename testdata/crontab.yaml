@@ -1,0 +1,10 @@
+apiVersion: "stable.example.com/v1"
+kind: CronTab
+metadata:
+  namespace: default
+  name: my-new-cron-object
+  finalizers:
+    - test
+spec:
+  cronSpec: "* * * * */5"
+  image: my-awesome-cron-image

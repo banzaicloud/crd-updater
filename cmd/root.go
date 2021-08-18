@@ -2,7 +2,8 @@ package cmd
 
 import (
 	"emperror.dev/errors"
-	"github.com/banzaicloud/helm3-crd-updater/pkg/reconcile"
+	"github.com/banzaicloud/crd-updater/pkg/reconcile"
+	"github.com/banzaicloud/operator-tools/pkg/reconciler"
 	"github.com/spf13/cobra"
 	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -13,6 +14,7 @@ var (
 	log                   = ctrl.Log.WithName("syncronize-resources")
 	yamlFiles             = []string{}
 	recreateResources     = false
+	delete                = false
 	reconciliationTimeout = time.Duration(0)
 	rootCmd               = &cobra.Command{
 		Use:   "sync-resources",
@@ -22,7 +24,13 @@ var (
 				log.Error(errors.New("please specify the input manifests"), "")
 				os.Exit(1)
 			}
-			err := reconcile.SyncronizeResources(yamlFiles, reconciliationTimeout, recreateResources)
+
+			desiredState := reconciler.StatePresent
+			if delete {
+				desiredState = reconciler.StateAbsent
+			}
+
+			err := reconcile.SyncronizeResources(yamlFiles, desiredState, reconciliationTimeout, recreateResources)
 			if err != nil {
 				log.Error(err, "reconciliation failed")
 				os.Exit(1)
@@ -40,4 +48,5 @@ func init() {
 	rootCmd.Flags().StringArrayVar(&yamlFiles, "manifest", []string{}, "Name of the YAML files to load manifests from (can be repeated multiple times)")
 	rootCmd.Flags().BoolVar(&recreateResources, "allow-recreate-resources", false, "In case of an inmutable field recreate the given resource (dangerous, as recreating a CRD causes all CRs to be deleted)")
 	rootCmd.Flags().DurationVar(&reconciliationTimeout, "timeout", 5*time.Minute, "Time out the reconciliation after this amount of time")
+	rootCmd.Flags().BoolVar(&delete, "delete", false, "Delete the resources instead of creating them")
 }
