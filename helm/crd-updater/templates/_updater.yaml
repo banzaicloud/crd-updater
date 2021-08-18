@@ -2,7 +2,8 @@
 {{ $root := first . }}
 {{ $args := rest . }}
 {{ $values := first $args }}
-{{ $yamlManifests := compact (rest $args) }}
+{{ $hookToManifestDict := first (rest $args) }}
+{{ $allHooks := keys $hookToManifestDict | join "," | splitList "," | uniq | join "," }}
 {{ $releaseName := default (printf "%s-crd-updater" $root.Release.Name ) $values.releaseName  }}
 {{ $hookDeletePolicy := default "hook-before-creation" $values.hookDeletePolicy }}
 {{ $imageSettings := default (dict "repository" nil "tag" nil "pullPolicy" nil) $values.image }}
@@ -12,7 +13,7 @@ kind: ClusterRole
 metadata:
   name: {{ $releaseName }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $allHooks }}
     "helm.sh/hook-weight": "1"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 rules:
@@ -26,7 +27,7 @@ kind: ClusterRoleBinding
 metadata:
   name: {{ $releaseName }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $allHooks }}
     "helm.sh/hook-weight": "2"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 roleRef:
@@ -44,7 +45,7 @@ kind: Role
 metadata:
   name: {{ $releaseName }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $allHooks }}
     "helm.sh/hook-weight": "1"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 rules:
@@ -55,7 +56,7 @@ kind: RoleBinding
 metadata:
   name: {{ $releaseName }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $allHooks }}
     "helm.sh/hook-weight": "2"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 roleRef:
@@ -72,17 +73,22 @@ kind: ServiceAccount
 metadata:
   name: {{ $releaseName }}
   annotations:
-      "helm.sh/hook": pre-install,pre-upgrade
+      "helm.sh/hook": {{ $allHooks }}
       "helm.sh/hook-weight": "1"
       "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
+
+---
+{{ range $hooks, $yamlManifests := $hookToManifestDict }}
+{{ $cmHookName := $hooks | replace "," "-" | trimAll "-" | trunc 128 }}
+{{ $cmHookChecksum := adler32sum $hooks }}
 {{ range $index, $object := $yamlManifests }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ $releaseName }}-manifests-{{ $index }}
+  name: {{ $releaseName }}-{{ $cmHookName }}-manifests-{{ $index }}
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $hooks }}
     "helm.sh/hook-weight": "1"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 data:
@@ -90,23 +96,26 @@ data:
     ---
     {{- $object | nindent 4 -}}
 {{ end }}
+{{ $individualHooks := $hooks | splitList "," }}
+{{ range $index, $hookName := $individualHooks }}
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: "{{ $releaseName }}"
+  name: "{{ $releaseName }}-{{ $hookName }}-{{ $cmHookChecksum }}"
   labels:
     app.kubernetes.io/instance: {{ $releaseName | quote }}
   annotations:
     # This is what defines this resource as a hook. Without this line, the
     # job is considered part of the release.
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": {{ $hookName }}
     "helm.sh/hook-weight": "5"
     "helm.sh/hook-delete-policy": {{ $hookDeletePolicy }}
 spec:
+  backoffLimit: {{ default 1 $values.backoffLimit }}
   template:
     metadata:
-      name: "{{ $releaseName }}"
+      name: "{{ $releaseName }}-{{ $hookName }}-{{ $cmHookChecksum }}"
       labels:
         app.kubernetes.io/instance: {{ $releaseName | quote }}
 {{ if $values.pod.annotations }}
@@ -119,11 +128,14 @@ spec:
       serviceAccountName: "{{ $releaseName }}"
       containers:
         - name: crd-updater
-          image: "{{ default "ghcr.io/banzaicloud/crd-updater" $imageSettings.repository  }}:{{ default "v0.0.2" $imageSettings.tag }}"
+          image: "{{ default "ghcr.io/banzaicloud/crd-updater" $imageSettings.repository  }}:{{ default "v0.0.3" $imageSettings.tag }}"
           imagePullPolicy: "{{ default "Always" $imageSettings.pullPolicy }}"
           args: [
               {{ range $index, $_ := $yamlManifests }}
               "--manifest", "/manifests/{{ $index }}/manifest.yaml",
+              {{ end }}
+              {{ if or (eq $hookName "pre-delete") (eq $hookName "post-delete") }}
+              "--delete",
               {{ end }}
           ]
           volumeMounts:
@@ -135,7 +147,7 @@ spec:
       {{ range $index, $_ := $yamlManifests }}
       - name: manifest-volume-{{ $index }}
         configMap:
-          name: {{ $releaseName }}-manifests-{{ $index }}
+          name: {{ $releaseName }}-{{ $cmHookName }}-manifests-{{ $index }}
       {{ end }}
       securityContext:
         runAsGroup: 1337
@@ -145,4 +157,6 @@ spec:
       imagePullSecrets:
 {{ toYaml $values.imagePullSecrets | nindent 8 }}
 {{ end }}
-{{- end -}}
+{{ end }}
+{{ end }}
+{{ end }}

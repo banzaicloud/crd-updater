@@ -35,7 +35,7 @@ To use this library chart, you need to have a Helm 3 chart (`version: v2` in `Ch
 ```yaml
 dependencies:
   - name: "crd-updater"
-    version: "0.0.2"
+    version: "0.0.3"
     repository: "https://kubernetes-charts.banzaicloud.com"
 ```
 
@@ -58,15 +58,18 @@ Then create a new file called `crd-updater.yaml` in the template folder:
 
 ```yaml
 {{- if .Values.crd.manage -}}
-{{ $templateArgs := list . .Values.crd }}
-{{ $currentScope := . }}
+
+{{{ $currentScope := . }}
+{{ $crdManifests := list }}
 {{ range $path, $_ := .Files.Glob "crds/*.yaml" }}
   {{ with $currentScope}}
-    {{ $templateArgs = append $templateArgs (.Files.Get $path) }}
+    {{ $crdManifests = append $crdManifests (.Files.Get $path) }}
   {{ end }}
 {{ end }}
 
-{{- include "crd-update.tpl" $templateArgs -}}
+include "crd-update.tpl" (list . .Values.crd (dict
+      "pre-install,pre-upgrade,pre-rollback" $crdManifests
+))
 {{- end -}}
 ```
 
@@ -112,23 +115,33 @@ What happened is that now a `crontab.tpl` template is defined, for which we can 
 Next we need to change the `crd-updater.yaml` to this:
 ```yaml
 {{- if .Values.crd.manage -}}
-{{ $templateArgs := list . .Values.crd (include "crontab.tpl" .) }}
+
 {{ $currentScope := . }}
+{{ $crdManifests := list }}
 {{ range $path, $_ := .Files.Glob "crds/*.yaml" }}
   {{ with $currentScope}}
-    {{ $templateArgs = append $templateArgs (.Files.Get $path) }}
+    {{ $crdManifests = append $crdManifests (.Files.Get $path) }}
   {{ end }}
 {{ end }}
 
-{{- include "crd-update.tpl" $templateArgs -}}
+{{- include "crd-update.tpl" (list . .Values.crd (dict
+      "pre-install,pre-upgrade,pre-rollback" $crdManifests
+      "post-install,post-upgrade,post-rollback,pre-delete" (list (include "crontab.tpl" .))
+    )) -}}
 {{- else -}}
 {{ include "crontab.tpl" . }}
 {{- end -}}
 ```
 
-There are two changes compared to the previous one: in line 2 a new list item is added to the `$templateArgs`: any YAML manifest passed after the first two arguments for the `crd-update.tpl` are YAML manifests that it will automatically update in the remote cluster. Please note: that the order of resource creation is not based on the argument position: CRD Updater will determine the [optimal installation order](https://github.com/banzaicloud/operator-tools/blob/v0.24.0/pkg/utils/sort.go#L29).
+There are two changes compared to the previous one: when invoking the `crd-update.tpl` we add a new line stating that when Helm is executing `post-install,post-upgrade,post-rollback,pre-delete` [hooks](https://helm.sh/docs/topics/charts_hooks/) it should also reconcile the `crontab.tpl`.
+
+As it is visible, the CR is added after the installation/upgrade (`post-install` hook). The reason behind is that if a helm user changes the `.crd.mange` value from false to true, then helm will remove the CronTab custom resource and then after intallation `crd-updater` will create the new one. Please note that this might mean traffic disruption, so it's not recommended to do so.
+
+The inclusion of `pre-delete` hook ensures that the CR will be removed when uninstalling the release. In the case of `pre-delete` and `post-delete` hooks, crd-updater automatically changes into delete mode. Finalizers are honored during this deletion: crd-updater will wait for the resource to completely get removed from the target cluster, before continuing the execution.
 
 The second change is the inclusion of the `{{- else -}}` branch in the condition: if the current release is not managing CRDs, then we should output our CustomResources for Helm (or any other CICD system) to handle.
+
+Please note: when including multiple manifests (such as CRDs) in a list the order of resource creation is not based on the argument position: CRD Updater will determine the [optimal installation order](https://github.com/banzaicloud/operator-tools/blob/v0.24.0/pkg/utils/sort.go#L29).
 
 Last but not least we need to grant access for `crd-updater` to manage these resources. For namespaced resources add the following to your values.yaml (under the existing `crd` key):
 
